@@ -1,0 +1,329 @@
+uniform_float uEffectStrength {
+    default = 1.0;
+    min = 0.0;
+    max = 1.0;
+    step = 0.01;
+    display_name = "Strength";
+    description = "Overall strength of the toon effect. 0 shows the original image.";
+}
+
+uniform_int uOutlineThickness {
+    default = 2;
+    min = 0;
+    max = 8;
+    step = 1;
+    header = "Outlines";
+    display_name = "Thickness";
+    description = "How thick the outlines are in pixels. Set to 0 to disable.";
+}
+
+uniform_float uOutlineStrength {
+    default = 1.0;
+    min = 0.0;
+    max = 1.0;
+    step = 0.01;
+    display_name = "Strength";
+    description = "How visible the outlines are.";
+}
+
+uniform_float uDepthEdgeThreshold {
+    default = 0.05;
+    min = 0.0;
+    max = 1.0;
+    step = 0.005;
+    display_name = "Edge Sensitivity";
+    description = "How easily edges are detected. Lower values produce more outlines.";
+}
+
+uniform_vec3 uOutlineColor {
+    default = vec3(0.0, 0.0, 0.0);
+    min = vec3(0.0, 0.0, 0.0);
+    max = vec3(1.0, 1.0, 1.0);
+    step = 0.01;
+    display_name = "Color";
+    description = "Base color of the outlines in RGB. 0,0,0 is Black. 1, 1, 1 is White.";
+}
+
+uniform_float uOutlineMatchScene {
+    default = 1.0;
+    min = 0.0;
+    max = 1.0;
+    step = 0.01;
+    display_name = "Match Scene";
+    description = "Blend between flat outline color and darkened scene color. Recommend to have at 1 to ignore the flat outline Color above and instead base it on the Scene.";
+}
+
+uniform_float uOutlineDarken {
+    default = 0.5;
+    min = 0.0;
+    max = 1.0;
+    step = 0.01;
+    display_name = "Darken";
+    description = "How much to darken scene-matched outlines.";
+}
+
+uniform_int uShadingSteps {
+    default = 12;
+    min = 0;
+    max = 32;
+    step = 1;
+    header = "Cel Shading";
+    display_name = "Shading Steps";
+    description = "Number of brightness bands. Fewer steps give a flatter cartoon look. 0 disables banding.";
+}
+
+uniform_float uBrightnessLift {
+    default = 0.1;
+    min = 0.0;
+    max = 0.5;
+    step = 0.01;
+    display_name = "Brightness Lift";
+    description = "Raises brightness slightly to prevent cel shading from making things too dark.";
+}
+
+uniform_float uSaturation {
+    default = 1.5;
+    min = 0.5;
+    max = 3.0;
+    step = 0.05;
+    display_name = "Saturation";
+    description = "How vivid colors are. Higher values give a more vibrant look.";
+}
+
+uniform_vec3 uShadowTint {
+    default = vec3(0.8, 0.75, 0.5);
+    min = vec3(0.0, 0.0, 0.0);
+    max = vec3(1.0, 1.0, 1.0);
+    step = 0.01;
+    display_name = "Shadow Tint";
+    description = "Color applied to the darkest shading bands. Warm tones give a livelier feel.";
+}
+
+uniform_int uHueSteps {
+    default = 10;
+    min = 0;
+    max = 24;
+    step = 1;
+    header = "Effects";
+    display_name = "Glow Shading Steps";
+    description = "Number of color bands for bright effects like fire and magic. 0 disables banding.";
+}
+
+uniform_float uHueBrightnessThreshold {
+    default = 0.8;
+    min = 0.0;
+    max = 1.0;
+    step = 0.01;
+    display_name = "Glow Threshold";
+    description = "How bright something must be before color banding applies. Higher values limit the effect to glowing objects.";
+}
+
+uniform_float uSkyCelStrength {
+    default = 0.5;
+    min = 0.0;
+    max = 1.0;
+    step = 0.01;
+    display_name = "Sky Strength";
+    description = "How much to stylize the sky. 0 leaves it unchanged.";
+}
+
+uniform_int uSkySteps {
+    default = 12;
+    min = 0;
+    max = 16;
+    step = 1;
+    display_name = "Sky Shading Steps";
+    description = "Number of color bands in the sky. 0 disables banding.";
+}
+
+render_target RT_Edges {
+    width_ratio = 1.0;
+    height_ratio = 1.0;
+    internal_format = r16f;
+    source_format = red;
+    source_type = half_float;
+    min_filter = linear;
+    mag_filter = linear;
+}
+
+render_target RT_Color {
+    width_ratio = 1.0;
+    height_ratio = 1.0;
+    internal_format = rgba16f;
+    source_format = rgba;
+    source_type = half_float;
+    min_filter = linear;
+    mag_filter = linear;
+}
+
+shared {
+    // RGB to HSV
+    vec3 rgbToHsv(vec3 c) {
+        float cMax = max(c.r, max(c.g, c.b));
+        float cMin = min(c.r, min(c.g, c.b));
+        float delta = cMax - cMin;
+
+        float h = 0.0;
+        if (delta > 0.0001) {
+            if (cMax == c.r)
+                h = mod((c.g - c.b) / delta, 6.0);
+            else if (cMax == c.g)
+                h = (c.b - c.r) / delta + 2.0;
+            else
+                h = (c.r - c.g) / delta + 4.0;
+            h /= 6.0;
+            if (h < 0.0) h += 1.0;
+        }
+
+        float s = (cMax > 0.0001) ? delta / cMax : 0.0;
+        float v = cMax;
+
+        return vec3(h, s, v);
+    }
+
+    // HSV to RGB
+    vec3 hsvToRgb(vec3 c) {
+        float h = c.x * 6.0;
+        float s = c.y;
+        float v = c.z;
+
+        float i = floor(h);
+        float f = h - i;
+        float p = v * (1.0 - s);
+        float q = v * (1.0 - s * f);
+        float t = v * (1.0 - s * (1.0 - f));
+
+        int hi = int(mod(i, 6.0));
+        if (hi == 0) return vec3(v, t, p);
+        if (hi == 1) return vec3(q, v, p);
+        if (hi == 2) return vec3(p, v, t);
+        if (hi == 3) return vec3(p, q, v);
+        if (hi == 4) return vec3(t, p, v);
+        return vec3(v, p, q);
+    }
+}
+
+fragment edgeDetect(target=RT_Edges) {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        float centerDepth = omw_GetLinearDepth(omw_TexCoord);
+
+        float depthEdge = 0.0;
+
+        float thickness = float(uOutlineThickness);
+
+        // Sample 4 cardinal directions + 4 diagonals
+        vec2 offsets[8];
+        offsets[0] = vec2( 1.0,  0.0);
+        offsets[1] = vec2(-1.0,  0.0);
+        offsets[2] = vec2( 0.0,  1.0);
+        offsets[3] = vec2( 0.0, -1.0);
+        offsets[4] = vec2( 1.0,  1.0);
+        offsets[5] = vec2(-1.0,  1.0);
+        offsets[6] = vec2( 1.0, -1.0);
+        offsets[7] = vec2(-1.0, -1.0);
+
+        for (int i = 0; i < 8; i++) {
+            vec2 sampleUV = omw_TexCoord + offsets[i] * thickness * omw.rcpResolution;
+            sampleUV = clamp(sampleUV, vec2(0.0), vec2(1.0));
+
+            float sampleDepth = omw_GetLinearDepth(sampleUV);
+            float depthDiff = abs(centerDepth - sampleDepth) / max(centerDepth, 1.0);
+            depthEdge = max(depthEdge, depthDiff);
+        }
+
+        float edge = step(uDepthEdgeThreshold, depthEdge);
+
+        // Fade edges in distant fog
+        float fog = omw_EstimateFogCoverageFromUV(omw_TexCoord);
+        edge *= (1.0 - fog);
+
+        omw_FragColor = vec4(edge, 0.0, 0.0, 1.0);
+    }
+}
+
+fragment celShade(target=RT_Color) {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec4 scene = omw_GetLastShader(omw_TexCoord);
+        float depth = omw_GetLinearDepth(omw_TexCoord);
+        float steps = float(uShadingSteps);
+
+        vec3 color = scene.rgb;
+
+        // Posterize the scene into discrete bands (skip if steps is 0)
+        vec3 hsv = rgbToHsv(color);
+
+        // Hue quantization — only on bright pixels (fire, magic, glows)
+        if (uHueSteps > 0 && hsv.z > uHueBrightnessThreshold) {
+            float hSteps = float(uHueSteps);
+            float quantizedHue = floor(hsv.x * hSteps + 0.5) / hSteps;
+            // Fade in as brightness increases past threshold
+            float hueFade = smoothstep(uHueBrightnessThreshold, uHueBrightnessThreshold + 0.2, hsv.z);
+            hsv.x = mix(hsv.x, quantizedHue, hueFade);
+        }
+
+        hsv.y = clamp(hsv.y * uSaturation, 0.0, 1.0);
+        hsv.z = clamp(hsv.z + uBrightnessLift, 0.0, 1.0);
+        float originalV = hsv.z;
+
+        // Only posterize brightness if steps > 0
+        if (uShadingSteps > 0) {
+            hsv.z = floor(hsv.z * steps) / steps;
+        }
+        color = hsvToRgb(hsv);
+
+        // Tint dark bands toward shadow color
+        float shadowAmount = 1.0 - hsv.z;
+        color = mix(color, color * uShadowTint, shadowAmount);
+
+        // Sky processing - 0 steps means leave sky unchanged
+        float isSky = step(omw.far * 0.9, depth);
+        if (isSky > 0.5) {
+            if (uSkySteps > 0) {
+                float skySteps = float(uSkySteps);
+                vec3 skyHsv = rgbToHsv(scene.rgb);
+                skyHsv.z = floor(skyHsv.z * skySteps) / skySteps;
+                vec3 skyCel = hsvToRgb(skyHsv);
+                color = mix(scene.rgb, skyCel, uSkyCelStrength);
+            } else {
+                // Sky steps = 0: use original sky, no cel-shading
+                color = scene.rgb;
+            }
+        }
+
+        omw_FragColor = vec4(color, scene.a);
+    }
+}
+
+fragment composite(rt1=RT_Edges, rt2=RT_Color) {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec4 original = omw_GetLastShader(omw_TexCoord);
+        vec4 celColor = omw_Texture2D(RT_Color, omw_TexCoord);
+        float edge = omw_Texture2D(RT_Edges, omw_TexCoord).r;
+
+        // Compose
+        vec3 color = celColor.rgb;
+        vec3 sceneOutline = original.rgb * (1.0 - uOutlineDarken);
+        vec3 outlineColor = mix(uOutlineColor, sceneOutline, uOutlineMatchScene);
+        color = mix(color, outlineColor, edge * uOutlineStrength);
+        color = mix(original.rgb, color, uEffectStrength);
+
+        omw_FragColor = vec4(color, original.a);
+    }
+}
+
+technique {
+    description = "Cel-shading/toon shading post-process with outlines and color banding.";
+    version = "0.1";
+    author = "Kartoffel";
+    passes = edgeDetect, celShade, composite;
+    glsl_version = 120;
+}
